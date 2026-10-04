@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hotel Room Booking</title>
+<style>
+:root{--ink:#14303a;--muted:#5d727a;--line:#d5dfe1;--bg:#f2f6f6;--card:#fff;--brass:#a9762a;--ok:#1f7a55;--bad:#b3392f}
+*{box-sizing:border-box}
+body{margin:0;font:16px/1.5 Georgia,'Times New Roman',serif;background:var(--bg);color:var(--ink)}
+header{background:var(--ink);color:#fff;padding:28px 5vw}
+header h1{margin:0;font-size:1.9rem;font-weight:600}
+header p{margin:4px 0 0;color:#b9ccd1}
+main{max-width:1100px;margin:0 auto;padding:24px 5vw 60px;display:grid;gap:22px}
+section{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:20px}
+h2{margin:0 0 14px;font-size:1.2rem}
+form,.row{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end}
+label{display:grid;gap:4px;font:600 .85rem system-ui,sans-serif;color:var(--muted)}
+input,select{font:1rem system-ui,sans-serif;padding:8px 10px;border:1px solid var(--line);border-radius:4px;min-width:140px;color:var(--ink)}
+button{font:600 .9rem system-ui,sans-serif;padding:9px 16px;border:0;border-radius:4px;background:var(--ink);color:#fff;cursor:pointer}
+button.alt{background:transparent;color:var(--ink);border:1px solid var(--ink)}
+button.danger{background:var(--bad)}
+button.small{padding:5px 10px;font-size:.8rem}
+:focus-visible{outline:3px solid var(--brass);outline-offset:2px}
+.scroll{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-family:system-ui,sans-serif;font-size:.95rem}
+th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+th{color:var(--muted);font-weight:600}
+.tag{padding:2px 9px;border-radius:99px;font-size:.8rem;font-weight:600}
+.free{background:#dff1e8;color:var(--ok)}.busy{background:#f6e0dd;color:var(--bad)}.maint{background:#ece8dd;color:var(--brass)}
+.empty{color:var(--muted);font-family:system-ui,sans-serif;padding:12px 0}
+#toast{position:fixed;right:20px;bottom:20px;padding:12px 18px;border-radius:6px;color:#fff;font:600 .95rem system-ui,sans-serif;display:none;max-width:340px}
+@media (prefers-reduced-motion:no-preference){#toast{transition:opacity .2s}}
+</style>
+</head>
+<body>
+<header><h1>Hotel Room Booking</h1><p>Add rooms, find free dates, book a stay, cancel a booking.</p></header>
+<main>
+  <section>
+    <h2>Add a room</h2>
+    <form id="roomForm">
+      <label>Room no<input name="roomNo" required placeholder="e.g. 105"></label>
+      <label>Type<select name="type"></select></label>
+      <label>Price per night (₹)<input name="price" type="number" min="1" step="any" required></label>
+      <button>Add room</button>
+    </form>
+  </section>
+
+  <section>
+    <h2>Search rooms</h2>
+    <form id="searchForm">
+      <label>Type<select name="type"><option value="">Any type</option></select></label>
+      <label>Check-in<input name="checkIn" type="date"></label>
+      <label>Check-out<input name="checkOut" type="date"></label>
+      <button>Search available</button>
+      <button type="button" class="alt" id="showAll">Show all rooms</button>
+    </form>
+    <div class="scroll" style="margin-top:14px"><table>
+      <thead><tr><th>Room</th><th>Type</th><th>Price / night</th><th>Status</th><th></th></tr></thead>
+      <tbody id="rooms"></tbody>
+    </table></div>
+    <div id="roomsEmpty" class="empty" hidden>No rooms match. Try other dates or another type.</div>
+  </section>
+
+  <section>
+    <h2>Book a room</h2>
+    <form id="bookForm">
+      <label>Room<select name="roomId" required></select></label>
+      <label>Guest name<input name="guestName" required></label>
+      <label>Check-in<input name="checkIn" type="date" required></label>
+      <label>Check-out<input name="checkOut" type="date" required></label>
+      <button>Book room</button>
+    </form>
+  </section>
+
+  <section>
+    <h2>Bookings</h2>
+    <div class="scroll"><table>
+      <thead><tr><th>Guest</th><th>Room</th><th>Check-in</th><th>Check-out</th><th></th></tr></thead>
+      <tbody id="bookings"></tbody>
+    </table></div>
+    <div id="bookingsEmpty" class="empty" hidden>No bookings yet. Book a room above.</div>
+  </section>
+</main>
+<div id="toast" role="status"></div>
+
+<script>
+const TYPES = ['Single','Double','Deluxe','Suite'];
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let toastTimer;
+function toast(msg, ok = true) {
+  const t = $('#toast'); t.textContent = msg; t.style.background = ok ? 'var(--ok)' : 'var(--bad)'; t.style.display = 'block';
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.style.display = 'none', 3500);
+}
+async function api(url, method = 'GET', body) {
+  const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: body && JSON.stringify(body) });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Request failed.');
+  return data;
+}
+const fail = e => toast(e.message, false);
+
+function fillTypes() {
+  document.querySelectorAll('select[name=type]').forEach(s => TYPES.forEach(t => s.add(new Option(t, t))));
+}
+
+function roomStatus(r) {
+  if (r.status === 'Maintenance') return '<span class="tag maint">Maintenance</span>';
+  return r.booked_today ? '<span class="tag busy">Booked today</span>' : '<span class="tag free">Available</span>';
+}
+
+function renderRooms(rooms) {
+  $('#rooms').innerHTML = rooms.map(r => `<tr>
+    <td><b>${esc(r.room_no)}</b></td><td>${esc(r.type)}</td><td>₹${r.price.toLocaleString('en-IN')}</td>
+    <td>${roomStatus(r)}</td>
+    <td><button class="small" data-book="${r.id}">Book</button>
+        <button class="small alt" data-toggle="${r.id}" data-status="${r.status}">${r.status === 'Available' ? 'Set maintenance' : 'Set available'}</button>
+        <button class="small danger" data-del="${r.id}">Delete</button></td></tr>`).join('');
+  $('#roomsEmpty').hidden = rooms.length > 0;
+}
+
+async function loadRooms() { renderRooms(await api('/api/rooms')); refreshRoomSelect(); }
+
+async function refreshRoomSelect() {
+  const rooms = await api('/api/rooms'), sel = $('#bookForm [name=roomId]'), keep = sel.value;
+  sel.innerHTML = rooms.filter(r => r.status === 'Available')
+    .map(r => `<option value="${r.id}">${esc(r.room_no)} - ${esc(r.type)} (₹${r.price})</option>`).join('');
+  if (keep) sel.value = keep;
+}
+
+async function loadBookings() {
+  const list = await api('/api/bookings');
+  $('#bookings').innerHTML = list.map(b => `<tr><td>${esc(b.guest_name)}</td>
+    <td>${esc(b.room_no)} (${esc(b.type)})</td><td>${b.check_in}</td><td>${b.check_out}</td>
+    <td><button class="small danger" data-cancel="${b.id}">Cancel booking</button></td></tr>`).join('');
+  $('#bookingsEmpty').hidden = list.length > 0;
+}
+
+const refresh = () => Promise.all([loadRooms(), loadBookings()]).catch(fail);
+
+$('#roomForm').onsubmit = async e => {
+  e.preventDefault(); const f = e.target;
+  try { await api('/api/rooms', 'POST', { roomNo: f.roomNo.value, type: f.type.value, price: f.price.value });
+        toast(`Room ${f.roomNo.value} added.`); f.reset(); refresh(); } catch (x) { fail(x); }
+};
+
+$('#searchForm').onsubmit = async e => {
+  e.preventDefault(); const f = e.target, q = new URLSearchParams();
+  ['type','checkIn','checkOut'].forEach(k => f[k].value && q.set(k, f[k].value));
+  try { renderRooms(await api('/api/rooms/search?' + q)); } catch (x) { fail(x); }
+};
+$('#showAll').onclick = () => { $('#searchForm').reset(); loadRooms().catch(fail); };
+
+$('#bookForm').onsubmit = async e => {
+  e.preventDefault(); const f = e.target;
+  try { await api('/api/bookings', 'POST', { roomId: +f.roomId.value, guestName: f.guestName.value, checkIn: f.checkIn.value, checkOut: f.checkOut.value });
+        toast('Room booked.'); f.guestName.value = ''; refresh(); } catch (x) { fail(x); }
+};
+
+document.addEventListener('click', async e => {
+  const d = e.target.dataset;
+  try {
+    if (d.book) { $('#bookForm [name=roomId]').value = d.book; $('#bookForm').scrollIntoView({ behavior: 'smooth' }); $('#bookForm [name=guestName]').focus(); }
+    if (d.cancel && confirm('Cancel this booking?')) { await api('/api/bookings/' + d.cancel, 'DELETE'); toast('Booking cancelled.'); refresh(); }
+    if (d.del && confirm('Delete this room and its bookings?')) { await api('/api/rooms/' + d.del, 'DELETE'); toast('Room deleted.'); refresh(); }
+    if (d.toggle) { await api('/api/rooms/' + d.toggle, 'PUT', { status: d.status === 'Available' ? 'Maintenance' : 'Available' }); toast('Room updated.'); refresh(); }
+  } catch (x) { fail(x); }
+});
+
+fillTypes(); refresh();
+</script>
+</body>
+</html>
